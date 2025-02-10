@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Audio Filter Visualization</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        canvas {
+            border: 1px solid black;
+            margin: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Live Audio Filter Visualization</h2>
+    <button id="start">Start Processing</button>
+    <button id="stop" disabled>Stop</button>
+
+    <h3>Original Audio (Microphone)</h3>
+    <canvas id="inputWave" width="600" height="150"></canvas>
+    <canvas id="inputFreq" width="600" height="150"></canvas>
+
+    <h3>Filtered Audio (Processed)</h3>
+    <canvas id="outputWave" width="600" height="150"></canvas>
+    <canvas id="outputFreq" width="600" height="150"></canvas>
+
+    <script>
+        let audioContext, source, processor, websocket;
+        let inputAnalyzer, outputAnalyzer;
+        let inputDataArray, outputDataArray;
+        let inputWaveCanvas, inputWaveCtx, inputFreqCanvas, inputFreqCtx;
+        let outputWaveCanvas, outputWaveCtx, outputFreqCanvas, outputFreqCtx;
+        let animationFrame;
+
+        document.getElementById("start").addEventListener("click", startAudio);
+        document.getElementById("stop").addEventListener("click", stopAudio);
+
+        function startAudio() {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    source = audioContext.createMediaStreamSource(stream);
+                    processor = audioContext.createScriptProcessor(1024, 1, 1);
+                    inputAnalyzer = audioContext.createAnalyser();
+                    outputAnalyzer = audioContext.createAnalyser();
+
+                    inputAnalyzer.fftSize = 2048;
+                    outputAnalyzer.fftSize = 2048;
+                    inputDataArray = new Uint8Array(inputAnalyzer.frequencyBinCount);
+                    outputDataArray = new Uint8Array(outputAnalyzer.frequencyBinCount);
+
+                    source.connect(inputAnalyzer);
+                    source.connect(processor);
+                    processor.connect(audioContext.destination);
+
+                    websocket = new WebSocket("ws://localhost:8000/process_audio");
+                    websocket.binaryType = "arraybuffer";
+
+                    processor.onaudioprocess = function (event) {
+                        let inputBuffer = event.inputBuffer.getChannelData(0);
+                        let bufferToSend = new Float32Array(inputBuffer);
+                        websocket.send(bufferToSend.buffer);
+                    };
+
+                    websocket.onmessage = function (event) {
+                        let receivedData = new Float32Array(event.data);
+                        let audioBuffer = audioContext.createBuffer(1, receivedData.length, audioContext.sampleRate);
+                        audioBuffer.copyToChannel(receivedData, 0);
+                        let outputSource = audioContext.createBufferSource();
+                        outputSource.buffer = audioBuffer;
+                        outputSource.connect(outputAnalyzer);
+                        outputSource.connect(audioContext.destination);
+                        outputSource.start();
+                    };
+
+                    initCanvas();
+                    drawVisualization();
+
+                    document.getElementById("start").disabled = true;
+                    document.getElementById("stop").disabled = false;
+                })
+                .catch(err => console.error("Audio error: ", err));
+        }
+
+        function stopAudio() {
+            if (audioContext) {
+                audioContext.close();
+            }
+            if (websocket) {
+                websocket.close();
+            }
+            cancelAnimationFrame(animationFrame);
+
+            document.getElementById("start").disabled = false;
+            document.getElementById("stop").disabled = true;
+        }
+
+        function initCanvas() {
+            inputWaveCanvas = document.getElementById("inputWave");
+            inputWaveCtx = inputWaveCanvas.getContext("2d");
+
+            inputFreqCanvas = document.getElementById("inputFreq");
+            inputFreqCtx = inputFreqCanvas.getContext("2d");
+
+            outputWaveCanvas = document.getElementById("outputWave");
+            outputWaveCtx = outputWaveCanvas.getContext("2d");
+
+            outputFreqCanvas = document.getElementById("outputFreq");
+            outputFreqCtx = outputFreqCanvas.getContext("2d");
+        }
+
+        function drawVisualization() {
+            animationFrame = requestAnimationFrame(drawVisualization);
+
+            inputAnalyzer.getByteTimeDomainData(inputDataArray);
+            outputAnalyzer.getByteTimeDomainData(outputDataArray);
+
+            drawWaveform(inputWaveCtx, inputDataArray, "blue");
+            drawWaveform(outputWaveCtx, outputDataArray, "green");
+
+            inputAnalyzer.getByteFrequencyData(inputDataArray);
+            outputAnalyzer.getByteFrequencyData(outputDataArray);
+
+            drawFrequency(inputFreqCtx, inputDataArray, "red");
+            drawFrequency(outputFreqCtx, outputDataArray, "purple");
+        }
+
+        function drawWaveform(ctx, dataArray, color) {
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = color;
+            ctx.beginPath();
+
+            let sliceWidth = ctx.canvas.width / dataArray.length;
+            let x = 0;
+
+            for (let i = 0; i < dataArray.length; i++) {
+                let v = dataArray[i] / 128.0;
+                let y = v * ctx.canvas.height / 2;
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+                x += sliceWidth;
+            }
+
+            ctx.stroke();
+        }
+
+        function drawFrequency(ctx, dataArray, color) {
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            let barWidth = (ctx.canvas.width / dataArray.length) * 2.5;
+            let x = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                let barHeight = dataArray[i] * 1.5;
+                ctx.fillStyle = color;
+                ctx.fillRect(x, ctx.canvas.height - barHeight, barWidth, barHeight);
+                x += barWidth + 1;
+            }
+        }
+    </script>
+</body>
+</html>
