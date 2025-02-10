@@ -1,4 +1,4 @@
-# Live Audio Filter Visualization
+# Live Audio Filter
 # Author : Ayush 
 
 ## Overview
