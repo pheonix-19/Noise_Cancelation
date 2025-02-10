@@ -46,7 +46,7 @@ The application provides four real-time canvases:
 ### Backend Setup
 1. Clone the repository
 ```bash
-git clone https
+git clone https://github.com/pheonix-19/Noise_Cancelation.git
 cd live-audio-filter
 ```
 
